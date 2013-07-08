@@ -190,6 +190,57 @@ class CKANHarvester(HarvesterBase):
 
             package_ids = json.loads(content)
 
+            # ETj: perform removal of objects not found remotely
+
+            log.info('Removal stage...')
+
+            if len(package_ids) > 0: # or there may have encountered a problem
+               log.info(' Checking existing dataset from source %s : %s' , harvest_job.source.id, harvest_job.source.title )
+
+#               for pid in package_ids:
+#                   log.info(' -- package %s', pid)
+
+               # the ids of the existing active metadata harvested from this source
+               old_ho_list = Session.query(HarvestObject) \
+                   .join(Package) \
+                   .filter(HarvestObject.package!=None) \
+                   .filter(Package.state==u'active') \
+                   .filter(HarvestObject.harvest_source_id==harvest_job.source.id) \
+                   .filter(HarvestObject.current==True) \
+                   .all()
+               # dict guid -> id
+               old_ho_dict = {}
+               for obj in old_ho_list:
+                   old_ho_dict[getattr(obj,'guid')] = obj
+
+               log.info('Found %s dataset already harvested from %s', len(old_ho_dict), harvest_job.source.id )
+
+               gathered = set(package_ids)
+               for old_guid, old_ho in old_ho_dict.iteritems():
+                   if old_guid in gathered:
+                       log.debug('guid exists %s ', old_guid)
+                   else:
+                       log.info('HarvestedObject no longer exists and will be removed [guid:%s, id:%s] ', old_guid, getattr(old_ho, 'id'))
+                       #log.info(old_ho)
+                       pkg_id = getattr(old_ho, 'package_id')
+#                       log.debug('Loading package %s', pkg_id)
+                       try:
+                           delSession = Session()
+                           pkg = delSession.query(Package).filter(Package.id==pkg_id).first()
+
+                           #pkg = Package.get(pkg_id) # .latest_related_revision()
+                           log.info('Removing package "%s"', pkg.name)
+                           context = {'model': model, 'session': delSession, 'user': 'harvest', 'api_version': 2}
+                           get_action('package_delete')(context, {'id':pkg_id})
+
+                           log.info('Package removed "%s"', pkg.name)
+                       except Exception,e:
+                           # Error in reoving the dataset, np, we'll go on....                       
+                           log.error('Error while removing stale HarvestedObject %s: %s ', old_guid, e)
+        else:
+            log.info('Not all remote packages are being processed: can not identify removed datasets')
+        # /ETj
+
         try:
             object_ids = []
             if len(package_ids):
